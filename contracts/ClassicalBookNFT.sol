@@ -3,16 +3,22 @@ pragma solidity ^0.8.1;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/PullPayment.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 
-contract ClassicalBookNFT is ERC721, Ownable, ReentrancyGuard, PullPayment {
+contract ClassicalBookNFT is ERC721, AccessControl, ReentrancyGuard, PullPayment {
     using Counters for Counters.Counter;
     Counters.Counter private currentTokenId;
+    Counters.Counter private reserveTokenId;
 
-    using EnumerableSet for EnumerableSet.AddressSet;
+    // roles
+    // DEFAULT_ADMIN_ROLE = 0x00
+    bytes32 public constant SWITCH_MINT_ROLE = keccak256("SWITCH_MINT_ROLE");
+    bytes32 public constant FREE_MINT_ROLE = keccak256("FREE_MINT_ROLE");
+
+    uint256 public constant reserveTokens = 100;
+    uint256 public currentSupply = 0;
 
     // Constants
     uint256 public maxSupply = 99;
@@ -25,11 +31,19 @@ contract ClassicalBookNFT is ERC721, Ownable, ReentrancyGuard, PullPayment {
     bool public isMintEnabled = true;
     /// store tokenid --> bookId
     mapping(uint256 => string) public tokenToBook;
-    // used for switch mint
-    EnumerableSet.AddressSet private whitelist;
 
-    modifier onlyWhitelist() {
-        require(whitelist.contains(_msgSender()), "not in whitelist!");
+    modifier onlyWhiteList() {
+        _checkRole(FREE_MINT_ROLE);
+        _;
+    }
+
+    modifier onlySwitchRole() {
+        _checkRole(SWITCH_MINT_ROLE);
+        _;
+    }
+
+    modifier onlyOwner() {
+        _checkRole(DEFAULT_ADMIN_ROLE);
         _;
     }
 
@@ -38,40 +52,103 @@ contract ClassicalBookNFT is ERC721, Ownable, ReentrancyGuard, PullPayment {
         uint256 indexed tokenId,
         string bookId
     );
-    event SetMintPrice(uint256 price);
+    event SetMintPrice(uint256 indexed price);
 
     // name and symbol
-    constructor() ERC721("Classical Book NFT Collectioin", "ClassicalBook") {}
+    constructor() ERC721("Classical Book NFT Collectioin", "ClassicalBook") {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(SWITCH_MINT_ROLE, msg.sender);
+    }
 
-    function toggleIsMintEnabled() external onlyWhitelist {
+    //set addresses to whiteList
+    function addToWhitelist(address[] calldata _addrArr) external onlyOwner {
+        for (uint256 i = 0; i < _addrArr.length; i++) {
+            _grantRole(FREE_MINT_ROLE, _addrArr[i]);
+        }
+    }
+
+    //remove addresses to whiteList
+    function removeFromWhitelist(address[] calldata _addrArr) external onlyOwner
+    {
+        for (uint256 i = 0; i < _addrArr.length; i++) {
+            _revokeRole(FREE_MINT_ROLE, _addrArr[i]);
+        }
+    }
+
+    //set address to switchList
+    function addToSwitchlist(address _switchAddress) external onlyOwner {
+        _grantRole(SWITCH_MINT_ROLE, _switchAddress);
+    }
+    //remove address from switchList
+    function removeFromSwitchList(address _switchAddress) external onlyOwner {
+        _revokeRole(SWITCH_MINT_ROLE, _switchAddress);
+    }
+
+    //transfer admin
+    function transferAdmin(address _newAdmin) external onlyOwner {
+        //first grantRole
+        _grantRole(DEFAULT_ADMIN_ROLE, _newAdmin);
+        //then revoke self
+        _revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
+    }
+
+    //swith mintable
+    function toggleIsMintEnabled() external onlySwitchRole {
         isMintEnabled = !isMintEnabled;
     }
 
     /// the lowest price is 1e15 Wei
-    function setMintPrice(uint256 newPriceUnit) external onlyOwner {
-        mintPrice = newPriceUnit * 1e15;
-        emit SetMintPrice(newPriceUnit);
+    function setMintPrice(uint256 _newPriceUnit) external onlyOwner {
+        mintPrice = _newPriceUnit * 1e15;
+        emit SetMintPrice(mintPrice);
     }
 
-    function mint(address recipient, string memory bookId)
+    function mint(address _recipient, string memory _bookId)
         public
         payable
         nonReentrant
         returns (uint256)
     {
         require(isMintEnabled, "Minting not enabled");
-        require(msg.value == mintPrice, "Please set the right value");
+        require(currentSupply <= maxSupply, "Max supply reached");
 
         // tokenId ++
         currentTokenId.increment();
-        uint256 tokenId = currentTokenId.current();
-        require(tokenId < maxSupply, "Max supply reached");
-        //transfer eth to the contract
-        _asyncTransfer(address(this), msg.value);
+        // reserve 100 NFTs from 1 ~ 100 
+        uint256 tokenId = currentTokenId.current() + reserveTokens;
+
+        //if no free mint, pay eth
+        if (!hasRole(FREE_MINT_ROLE, msg.sender)) {
+            require(msg.value == mintPrice, "Please set the right value");
+            //transfer eth to the contract
+            _asyncTransfer(address(this), msg.value);
+        }
+        
         // mint nft
-        _safeMint(recipient, tokenId);
-        tokenToBook[tokenId] = bookId;
-        emit MintEvent(recipient, tokenId, bookId);
+        _safeMint(_recipient, tokenId);
+        tokenToBook[tokenId] = _bookId;
+        currentSupply++;
+        emit MintEvent(_recipient, tokenId, _bookId);
+        return tokenId;
+    }
+
+    function mintReserve(address _recipient, string memory _bookId) external onlyOwner returns (uint256)
+    {
+        require(isMintEnabled, "Minting not enabled");
+        require(currentSupply <= maxSupply, "Max supply reached");
+
+        // tokenId ++
+        reserveTokenId.increment();
+        // reserve 100 NFTs from 1 ~ 100 
+        uint256 tokenId = reserveTokenId.current();
+
+        require(tokenId <= reserveTokens, "Max reserve reached");
+        
+        // mint nft
+        _safeMint(_recipient, tokenId);
+        tokenToBook[tokenId] = _bookId;
+        currentSupply++;
+        emit MintEvent(_recipient, tokenId, _bookId);
         return tokenId;
     }
 
@@ -87,21 +164,12 @@ contract ClassicalBookNFT is ERC721, Ownable, ReentrancyGuard, PullPayment {
 
     /// Sets max supply, one book one nft
     function setMaxSupply(uint256 _maxSupply) public onlyOwner {
-        uint256 tokenId = currentTokenId.current();
-        require(_maxSupply > tokenId, "Must greate than current token id");
+        require(_maxSupply > currentSupply, "Must greate than current supply");
         maxSupply = _maxSupply;
     }
 
-    /**
-     * @dev See {IERC721Enumerable-totalSupply}.
-     */
-    function totalSupply() public view returns (uint256) {
-        uint256 tokenId = currentTokenId.current();
-        return tokenId;
-    }
-
     /// @dev Overridden in order to make it an onlyOwner function
-    function withdrawPayments(address payable payee)
+    function withdrawPayments(address payable _payee)
         public
         virtual
         override
@@ -110,29 +178,19 @@ contract ClassicalBookNFT is ERC721, Ownable, ReentrancyGuard, PullPayment {
         // 先取
         super.withdrawPayments(payable(address(this)));
         // 再转
-        payee.transfer(address(this).balance);
+        _payee.transfer(address(this).balance);
     }
 
     receive() external payable {
         //  to receiving ether
     }
 
-    function addToWhitelist(address[] calldata _addrArr) external onlyOwner {
-        for (uint256 i = 0; i < _addrArr.length; i++) {
-            require(whitelist.add(_addrArr[i]), "Add whitelist failed!");
-        }
-    }
-
-    function removeFromWhitelist(address[] calldata _addrArr)
-        external
-        onlyOwner
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(ERC721, AccessControl)
+        returns (bool)
     {
-        for (uint256 i = 0; i < _addrArr.length; i++) {
-            require(whitelist.remove(_addrArr[i]), "Remove whitelist failed!");
-        }
-    }
-
-    function getWhitelist() external view returns (address[] memory) {
-        return whitelist.values();
+        return super.supportsInterface(interfaceId);
     }
 }
