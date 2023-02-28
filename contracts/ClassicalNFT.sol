@@ -29,6 +29,8 @@ contract ClassicalNFT is
     bytes32 public constant SWITCH_MINT_ROLE = keccak256("SWITCH_MINT_ROLE");
     bytes32 public constant FREE_MINT_ROLE = keccak256("FREE_MINT_ROLE");
 
+    uint256 totalBalance;
+
     uint256 public constant reserveTokens = 100;
     uint256 public currentSupply = 0;
 
@@ -84,9 +86,14 @@ contract ClassicalNFT is
     event SetMintPrice(uint256 indexed price);
 
     // name and symbol
-    constructor() ERC721("Classical NFT Collectioin", "ClassicalNFT") {
+    constructor(address _treasuryAddress, 
+            address _publicGoodAddress, 
+            uint96 feeNumerator) ERC721("Classical NFT Collectioin", "ClassicalNFT") {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(SWITCH_MINT_ROLE, msg.sender);
+        treasuryAddress = _treasuryAddress;
+        publicGoodAddress = _publicGoodAddress;
+        setDefaultRoyalty(feeNumerator);
     }
 
     //set addresses to whiteList
@@ -99,10 +106,6 @@ contract ClassicalNFT is
     function setPublicKey(address pk) public onlyOwner {
         public_key = pk;
         emit AddPKSuccess(pk, msg.sender);
-    }
-
-    function getPublickey() public view returns (address) {
-        return public_key;
     }
 
     // TODO:need use internal
@@ -226,14 +229,6 @@ contract ClassicalNFT is
         baseTokenURI = _baseTokenURI;
     }
 
-    /**
-     * @dev See {IERC721Enumerable-totalSupply}.
-     */
-    function totalSupply() public view returns (uint256) {
-        uint256 tokenId = currentTokenId.current();
-        return tokenId;
-    }
-
     /// Sets max supply, one book one nft
     function setMaxSupply(uint256 _maxSupply) public onlyOwner {
         require(_maxSupply > currentSupply, "Must greate than current supply");
@@ -242,12 +237,19 @@ contract ClassicalNFT is
 
     /// @dev Overridden in order to make it an onlyOwner function
     function withdrawPayments(
-        address payable _payee
+        address payable
     ) public virtual override onlyOwner {
         // 先取
         super.withdrawPayments(payable(address(this)));
-        // 再转
-        _payee.transfer(address(this).balance);
+
+        //现获取公益比例
+        uint256 percentage = getDonateRate();
+
+        //先转公益地址
+        payable(publicGoodAddress).transfer(address(this).balance * percentage / 100);
+        //再转过库地址
+        payable(treasuryAddress).transfer(address(this).balance);
+
     }
 
     function supportsInterface(
@@ -269,16 +271,44 @@ contract ClassicalNFT is
         super._setDefaultRoyalty(treasuryAddress, feeNumerator);
     }
 
-    // function batchConfig(uint96 feeNumerator) public onlyOwner {
-    //     super._setDefaultRoyalty(treasuryAddress, feeNumerator);
-    // }
+    function setTreasuryAddress(address _treasuryAddress) external onlyOwner{
+        treasuryAddress = _treasuryAddress;
+    }
 
-    fallback() external payable {
-        emit Track("fallback()", msg.sender, msg.value, msg.data);
-        revert();
+    function setPublicGoodAddress(address _publicGoodAddress) external onlyOwner{
+        publicGoodAddress = _publicGoodAddress;
     }
 
     receive() external payable {
+        totalBalance += msg.value;
         emit Track("receive()", msg.sender, msg.value, "");
     }
+
+    function getDonateRate() public view returns (uint256){
+
+        uint256 percentage = 0;
+
+        // 计算应捐赠的金额
+        if (totalBalance < 10 ether) {
+            percentage = 10;
+        } else if (totalBalance >10 && totalBalance < 100 ether) {
+            percentage = 20;
+        } else if (totalBalance >100 && totalBalance < 1000 ether) {
+            percentage = 30;
+        } else if (totalBalance >1000 && totalBalance < 10000 ether) {
+            percentage = 40;
+        } else if (totalBalance >10000 && totalBalance < 100000 ether) {
+            percentage = 50;
+        } else if (totalBalance >100000 && totalBalance < 1000000 ether) {
+            percentage = 60;
+        } else if (totalBalance >1000000 && totalBalance < 10000000 ether) {
+            percentage = 70;
+        } else if (totalBalance >10000000 && totalBalance < 100000000 ether) {
+            percentage = 80;
+        } else {
+             percentage = 90;
+        }
+        return percentage;
+    }
+
 }
