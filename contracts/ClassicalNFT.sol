@@ -40,7 +40,7 @@ contract ClassicalNFT is
     uint256 public mintPrice = 0.0002 ether;
 
     /// @dev Base token URI used as a prefix by tokenURI().
-    string private baseTokenURI;
+    string public baseTokenURI;
     // switch mint
     bool public isMintEnabled = true;
     address public public_key;
@@ -56,7 +56,7 @@ contract ClassicalNFT is
     /// store tokenid --> bookId
     mapping(uint256 => string) public tokenToBook;
     mapping(string => bool) public bookList;
-    string[] bookIds;
+    string[] public bookIds;
     event Track(
         string indexed _function,
         address sender,
@@ -212,6 +212,7 @@ contract ClassicalNFT is
     ) external onlyOwner returns (uint256) {
         require(isMintEnabled, "Minting not enabled");
         require(currentSupply <= maxSupply, "Max supply reached");
+        require(!bookList[_bookId], "Book id exist");
 
         // tokenId ++
         reserveTokenId.increment();
@@ -223,6 +224,8 @@ contract ClassicalNFT is
         // mint nft
         _safeMint(_recipient, tokenId);
         tokenToBook[tokenId] = _bookId;
+        bookList[_bookId] = true;
+        bookIds.push(_bookId);
         currentSupply++;
         emit MintEvent(_recipient, tokenId, _bookId);
         return tokenId;
