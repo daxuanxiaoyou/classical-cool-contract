@@ -571,6 +571,223 @@ describe("ClassicalNFT", () => {
     });
   });
 
+  describe("whitelist mint free", function () {
+    it("should free mint by whitelist", async function () {
+      const { classicalNFT, owner, otherAccount } = await loadFixture(
+        deployClassicalNFTFixture
+      );
+      await classicalNFT.setPublicKey(owner.address);
+
+      //set whitelist
+      await classicalNFT.addToWhitelist([otherAccount.address]);
+
+      const chainId = network.config.chainId || 1;
+
+      const bookId = "bookId1";
+    
+      const sigedMsg = signMsgFromAddress(
+        otherAccount.address,
+        bookId,
+        classicalNFT.address,
+        chainId,
+        privateKey
+      );
+
+      await classicalNFT.connect(otherAccount).mintFree(
+        otherAccount.address,
+        bookId,
+        sigedMsg,
+        classicalNFT.address,
+        chainId
+      );
+    
+
+      expect(await classicalNFT.ownerOf(101)).to.equal(otherAccount.address);
+      
+    });
+    it("should not free mint by other", async function () {
+      const { classicalNFT, owner, otherAccount } = await loadFixture(
+        deployClassicalNFTFixture
+      );
+      await classicalNFT.setPublicKey(owner.address);
+
+      const chainId = network.config.chainId || 1;
+      const bookId = "bookId1";
+    
+      const sigedMsg = signMsgFromAddress(
+        otherAccount.address, //msg.sender
+        bookId,
+        classicalNFT.address,
+        chainId,
+        privateKey
+      );
+
+      try {
+        await classicalNFT
+          .connect(otherAccount)
+          .mintFree(otherAccount.address,
+            bookId,
+            sigedMsg,
+            classicalNFT.address,
+            chainId)
+      } catch (args) {
+        expect(await classicalNFT.bookList("book1")).to.be.false;
+        expect(args?.message).contains(" reverted with reason string");
+      }
+    });
+  });
+
+  describe("withdrawPayments", function () {
+    it("should withdrawPayments by owner", async function () {
+      const { classicalNFT, owner, otherAccount } = await loadFixture(
+        deployClassicalNFTFixture
+      );
+      await classicalNFT.setPublicKey(owner.address);
+
+      //set whitelist
+      await classicalNFT.addToWhitelist([otherAccount.address]);
+
+      const chainId = network.config.chainId || 1;
+
+      const bookId = "bookId1";
+    
+      const sigedMsg = signMsgFromAddress(
+        otherAccount.address,
+        bookId,
+        classicalNFT.address,
+        chainId,
+        privateKey
+      );
+
+      await classicalNFT.connect(otherAccount).mint(
+        otherAccount.address,
+        bookId,
+        sigedMsg,
+        classicalNFT.address,
+        chainId,
+        {
+          value: ethers.utils.parseEther("0.0002"),
+        }
+      );
+      expect(await classicalNFT.ownerOf(101)).to.equal(otherAccount.address);
+
+      let treasuryAddressNew = ethers.Wallet.createRandom();
+      let publicGoodAddressNew = ethers.Wallet.createRandom();
+
+      await classicalNFT.setTreasuryAddress(treasuryAddressNew.address);
+      await classicalNFT.setPublicGoodAddress(publicGoodAddressNew.address);
+
+      //withdraw
+      await classicalNFT.withdrawPayments(owner.address);
+
+      expect((await classicalNFT.totalBalance()).toString()).to.equal(ethers.utils.parseEther("0.0002"));
+      expect((await ethers.provider.getBalance(await treasuryAddressNew.getAddress())).toString()).to.equal(ethers.utils.parseEther("0.00018"));
+      expect((await ethers.provider.getBalance(await publicGoodAddressNew.getAddress())).toString()).to.equal(ethers.utils.parseEther("0.00002"));
+      
+    });
+    it("should not withdrawPayments by other", async function () {
+      const { classicalNFT, owner, otherAccount } = await loadFixture(
+        deployClassicalNFTFixture
+      );
+      await classicalNFT.setPublicKey(owner.address);
+
+      //set whitelist
+      await classicalNFT.addToWhitelist([otherAccount.address]);
+
+      const chainId = network.config.chainId || 1;
+
+      const bookId = "bookId1";
+    
+      const sigedMsg = signMsgFromAddress(
+        otherAccount.address,
+        bookId,
+        classicalNFT.address,
+        chainId,
+        privateKey
+      );
+
+      await classicalNFT.connect(otherAccount).mint(
+        otherAccount.address,
+        bookId,
+        sigedMsg,
+        classicalNFT.address,
+        chainId,
+        {
+          value: ethers.utils.parseEther("0.0002"),
+        }
+      );
+      expect(await classicalNFT.ownerOf(101)).to.equal(otherAccount.address);
+
+      //withdraw
+      try {
+        await classicalNFT.connect(otherAccount).withdrawPayments(owner.address);
+      } catch (e) {
+        expect(e.message).contains(" reverted with reason string");
+      }
+    });
+  });
+
+  describe("transfer admin", function () {
+    it("should transfer admin by owner steps", async function () {
+      const { classicalNFT, owner, otherAccount } = await loadFixture(
+        deployClassicalNFTFixture
+      );
+      
+      //step1
+      await classicalNFT.transferAdminStep1(otherAccount.address);
+
+      expect((await classicalNFT.oldAdmin()).toString()).to.equal(owner.address);
+      expect((await classicalNFT.hasRole(classicalNFT.DEFAULT_ADMIN_ROLE(),otherAccount.address))).to.be.true;
+
+      //step2
+      await classicalNFT.connect(otherAccount).transferAdminStep2();
+      expect((await classicalNFT.oldAdmin()).toString()).to.equal('0x0000000000000000000000000000000000000000');
+      expect((await classicalNFT.hasRole(classicalNFT.DEFAULT_ADMIN_ROLE(),otherAccount.address))).to.be.true;
+      expect((await classicalNFT.hasRole(classicalNFT.DEFAULT_ADMIN_ROLE(),owner.address))).to.be.false;
+    });
+    it("should not multitimes step1", async function () {
+      const { classicalNFT, owner, otherAccount } = await loadFixture(
+        deployClassicalNFTFixture
+      );
+      //step1
+      await classicalNFT.transferAdminStep1(otherAccount.address);
+
+      try {
+        await classicalNFT.transferAdminStep1(otherAccount.address);
+      } catch (e) {
+        expect(e.message).contains("reverted with reason string 'Step1 cannot be executed multiple times in a row'");
+      }
+
+    });
+
+    it("should not multitimes step2", async function () {
+      const { classicalNFT, owner, otherAccount } = await loadFixture(
+        deployClassicalNFTFixture
+      );
+
+      //step1
+      await classicalNFT.transferAdminStep1(otherAccount.address);
+
+      expect((await classicalNFT.oldAdmin()).toString()).to.equal(owner.address);
+      expect((await classicalNFT.hasRole(classicalNFT.DEFAULT_ADMIN_ROLE(),otherAccount.address))).to.be.true;
+      //step2
+      await classicalNFT.connect(otherAccount).transferAdminStep2();
+      expect((await classicalNFT.oldAdmin()).toString()).to.equal('0x0000000000000000000000000000000000000000');
+      expect((await classicalNFT.hasRole(classicalNFT.DEFAULT_ADMIN_ROLE(),otherAccount.address))).to.be.true;
+      expect((await classicalNFT.hasRole(classicalNFT.DEFAULT_ADMIN_ROLE(),owner.address))).to.be.false;
+
+      try {
+        await classicalNFT.connect(otherAccount).transferAdminStep2();
+      } catch (e) {
+        expect(e.message).contains("reverted with reason string 'Step2 cannot be executed multiple times in a row'");
+      }
+
+    });
+
+  });
+
+  
+
   // describe("Withdrawals", function () {
   //   describe("Validations", function () {
   //     it("Should revert with the right error if called too soon", async function () {
