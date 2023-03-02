@@ -29,7 +29,7 @@ contract ClassicalNFT is
     bytes32 public constant SWITCH_MINT_ROLE = keccak256("SWITCH_MINT_ROLE");
     bytes32 public constant FREE_MINT_ROLE = keccak256("FREE_MINT_ROLE");
 
-    uint256 totalBalance;
+    uint256 public totalBalance;
 
     uint256 public constant reserveTokens = 100; // TODO:设置大一点？中间有一段数据可以空出来
     uint256 public currentSupply = 0;
@@ -212,7 +212,7 @@ contract ClassicalNFT is
         bookList[_bookId] = true;
         bookIds.push(_bookId);
         currentSupply++;
-        totalBalance += msg.value;
+        //totalBalance += msg.value;
         emit MintEvent(_recipient, tokenId, _bookId, msg.sender);
         return tokenId;
     }
